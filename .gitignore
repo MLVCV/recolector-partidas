@@ -1,0 +1,6 @@
+riot_key.txt
+.env
+datos_riot/
+__pycache__/
+lol_data.js
+lol_data.json

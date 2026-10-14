@@ -1,0 +1,76 @@
+# Junta partidas de LAS con recolector_riot.py sin depender de la PC.
+# Corre cada 6 horas, durante 5 horas, y sigue desde donde quedó la vez anterior.
+# Este repo es público para que GitHub Actions no tenga límite de minutos.
+#
+# Antes de que funcione hay que guardar la clave personal de Riot como secreto del repo:
+# Settings → Secrets and variables → Actions → New repository secret, nombre RIOT_API_KEY.
+#
+# Las partidas juntadas (datos_riot/) se guardan en la caché de Actions, que no es pública.
+# lol_data.js y lol_data.json quedan para bajar en cada corrida, en "Artifacts".
+name: Recolectar partidas
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:  # para correrlo a mano desde la pestaña Actions
+
+# Una corrida por vez: si la anterior sigue, la nueva espera
+concurrency:
+  group: recolector
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  recolectar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340  # GitHub corta a las 6 h; el recolector para a las 5 y guarda
+    env:
+      RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
+    steps:
+      - name: Avisar si falta la clave
+        if: env.RIOT_API_KEY == ''
+        run: echo "::warning::Falta el secreto RIOT_API_KEY. No se junta nada hasta cargarlo."
+
+      - uses: actions/checkout@v4
+        if: env.RIOT_API_KEY != ''
+
+      - uses: actions/setup-python@v5
+        if: env.RIOT_API_KEY != ''
+        with:
+          python-version: "3.12"
+
+      - name: Traer las partidas de corridas anteriores
+        if: env.RIOT_API_KEY != ''
+        uses: actions/cache/restore@v4
+        with:
+          path: datos_riot
+          key: datos-riot-${{ github.run_id }}
+          restore-keys: datos-riot-
+
+      - name: Juntar partidas
+        if: env.RIOT_API_KEY != ''
+        run: |
+          # Se borran los del repo para no subir datos viejos si la corrida no llega a generar nada
+          rm -f lol_data.js lol_data.json
+          python recolector_riot.py --horas 5
+
+      # Se guarda aunque la corrida falle o la corte el límite de tiempo, para no perder lo juntado
+      - name: Guardar las partidas para la próxima corrida
+        if: always() && env.RIOT_API_KEY != ''
+        uses: actions/cache/save@v4
+        with:
+          path: datos_riot
+          key: datos-riot-${{ github.run_id }}
+
+      - name: Dejar lol_data.js y lol_data.json para bajar
+        if: always() && env.RIOT_API_KEY != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: lol_data
+          path: |
+            lol_data.js
+            lol_data.json
+          retention-days: 7
+          if-no-files-found: warn
