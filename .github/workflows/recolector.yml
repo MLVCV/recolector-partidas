@@ -6,7 +6,9 @@
 # Settings → Secrets and variables → Actions → New repository secret, nombre RIOT_API_KEY.
 #
 # Las partidas juntadas (datos_riot/) se guardan en la caché de Actions, que no es pública.
-# lol_data.js y lol_data.json quedan para bajar en cada corrida, en "Artifacts".
+# lol_data.js y lol_data.json quedan para bajar en cada corrida, en "Artifacts", y se
+# publican en la rama datos (siempre un solo commit, con lo último). El repo principal del
+# proyecto los copia de ahí una vez por día.
 name: Recolectar partidas
 
 on:
@@ -20,7 +22,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write  # para publicar lol_data.js y lol_data.json en la rama datos
 
 jobs:
   recolectar:
@@ -74,3 +76,18 @@ jobs:
             lol_data.json
           retention-days: 7
           if-no-files-found: warn
+
+      # Un solo commit que reemplaza al anterior, para que la rama no acumule historial
+      - name: Publicar lol_data en la rama datos
+        if: always() && env.RIOT_API_KEY != '' && hashFiles('lol_data.js') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/datos && cp lol_data.js lol_data.json /tmp/datos/
+          cd /tmp/datos
+          git init -q -b datos
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Datos del $(date -u '+%Y-%m-%d %H:%M') UTC"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" datos
