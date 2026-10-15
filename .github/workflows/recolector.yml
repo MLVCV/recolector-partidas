@@ -1,5 +1,7 @@
 # Junta partidas de LAS con recolector_riot.py sin depender de la PC.
-# Corre cada 6 horas, durante 5 horas, y sigue desde donde quedó la vez anterior.
+# Cada corrida dura 5 horas y, al terminar bien, lanza la siguiente: así junta casi todo
+# el día sin depender de los horarios programados, que GitHub suele atrasar varias horas.
+# Un horario por día queda de respaldo por si la cadena se corta (por ejemplo, si vence la clave).
 # Este repo es público para que GitHub Actions no tenga límite de minutos.
 #
 # Antes de que funcione hay que guardar la clave personal de Riot como secreto del repo:
@@ -8,12 +10,12 @@
 # Las partidas juntadas (datos_riot/) se guardan en la caché de Actions, que no es pública.
 # lol_data.js y lol_data.json quedan para bajar en cada corrida, en "Artifacts", y se
 # publican en la rama datos (siempre un solo commit, con lo último). El repo principal del
-# proyecto los copia de ahí una vez por día.
+# proyecto los copia de ahí cada 6 horas.
 name: Recolectar partidas
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "17 9 * * *"  # respaldo; fuera de la hora en punto, que es cuando GitHub más atrasa
   workflow_dispatch:  # para correrlo a mano desde la pestaña Actions
 
 # Una corrida por vez: si la anterior sigue, la nueva espera
@@ -23,6 +25,7 @@ concurrency:
 
 permissions:
   contents: write  # para publicar lol_data.js y lol_data.json en la rama datos
+  actions: write   # para lanzar la corrida siguiente
 
 jobs:
   recolectar:
@@ -34,6 +37,9 @@ jobs:
       - name: Avisar si falta la clave
         if: env.RIOT_API_KEY == ''
         run: echo "::warning::Falta el secreto RIOT_API_KEY. No se junta nada hasta cargarlo."
+
+      - name: Anotar cuándo empezó
+        run: echo "INICIO=$(date +%s)" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
         if: env.RIOT_API_KEY != ''
@@ -91,3 +97,17 @@ jobs:
           git add -A
           git commit -q -m "Datos del $(date -u '+%Y-%m-%d %H:%M') UTC"
           git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" datos
+
+      # Solo si juntó bien y durante al menos una hora: si Riot rechaza la clave o algo
+      # falla enseguida, la cadena se corta y no queda lanzando corridas una tras otra.
+      - name: Lanzar la corrida siguiente
+        if: success() && env.RIOT_API_KEY != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          duro=$(( $(date +%s) - INICIO ))
+          if [ "$duro" -lt 3600 ]; then
+            echo "La corrida duró $(( duro / 60 )) minutos; no lanzo la siguiente."
+            exit 0
+          fi
+          gh workflow run recolector.yml --repo "${{ github.repository }}" --ref main
